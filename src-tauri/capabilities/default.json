@@ -3,8 +3,13 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
+  "local": true,
+  "remote": {
+    "urls": ["https://app.nextagsai.com.br/*"]
+  },
   "permissions": [
     "core:default",
-    "opener:default"
+    "opener:default",
+    "allow-clear-cache"
   ]
 }

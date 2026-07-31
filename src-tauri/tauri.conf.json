@@ -16,6 +16,12 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "publisher": "NexTags",
+    "copyright": "© NexTags",
+    "category": "Business",
+    "homepage": "https://app.nextagsai.com.br/",
+    "shortDescription": "NexTags AI Desktop",
+    "longDescription": "Aplicativo desktop da NexTags AI.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
