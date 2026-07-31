@@ -118,6 +118,11 @@ Também: runner Linux pinado em `ubuntu-24.04` (o `ubuntu-latest` vai migrar pro
   comportamento do app web decide.
 - **"Limpar cache e recarregar" não foi testado em runtime.** A correção de ACL foi validada em
   tempo de compilação; confirmar clicando no item do menu num build real.
+- **Depreciação do Node 20 nos runners.** O run atual passa, mas emite aviso: `actions/checkout@v4`
+  e `actions/setup-node@v4` têm runtime Node 20 e estão sendo forçados pra Node 24. Quando a GitHub
+  cortar de vez, o workflow quebra. Correção quando for conveniente: subir as duas actions pra `@v5`
+  (e, de quebra, o `node-version: 20` pra 22). Não mexi agora pra não arriscar o primeiro build
+  verde.
 
 ## Não fazer
 
