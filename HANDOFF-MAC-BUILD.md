@@ -68,17 +68,70 @@ Se aparecer "o app está danificado e não pode ser aberto", é a flag de quaren
 São 4 passos numa caixa de Ajustes do Sistema, não um clique — vale calibrar a expectativa de
 quem for instalar.
 
-Pra eliminar esse aviso de vez, precisa de:
+### Assinatura ad-hoc (aplicada, e o que ela resolve)
 
-- Conta Apple Developer (US$ 99/ano)
-- Certificado de assinatura + notarização (automatizável no mesmo workflow via
-  `tauri-apps/tauri-action`, que já suporta isso via secrets `APPLE_CERTIFICATE`,
-  `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`,
-  `APPLE_TEAM_ID`)
+`tauri.macos.conf.json` agora traz `bundle.macOS.signingIdentity: "-"`. É assinatura **ad-hoc**:
+grátis, sem conta Apple, feita no próprio runner.
 
-**Ainda não configurado, e ainda pendente de decisão:** perguntar ao usuário se a NexTags já tem
-conta Apple Developer antes de implementar. Sem isso o app é 100% usável, só exige aqueles passos
-extras na primeira execução.
+Ela **não** satisfaz o Gatekeeper — o aviso de desenvolvedor não verificado continua. O que ela
+resolve é outra coisa, e importa: sem nenhuma assinatura, o macOS 15.1+ tende a mostrar **"o app
+está danificado e não pode ser aberto"**, que *não tem botão de contorno na interface*. Com o selo
+ad-hoc consistente, o app cai no diálogo normal, que tem saída via Ajustes do Sistema.
+
+Em resumo: ad-hoc não remove o atrito, torna o atrito transponível sem Terminal.
+
+Efeito colateral conhecido: há bug intermitente do Tauri no bundle do DMG com ad-hoc
+([tauri#13804](https://github.com/tauri-apps/tauri/issues/13804)). Se o job de macOS falhar no passo
+do DMG sem motivo aparente, re-rodar costuma resolver.
+
+### Eliminar o aviso de vez
+
+Só notarização faz isso, e notarização exige certificado Developer ID — que só existe dentro do
+Apple Developer Program (US$ 99/ano). Não há atalho. Uma vez com a conta, é automatizável no mesmo
+workflow via `tauri-action`, com os secrets `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+`APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
+
+**Decisão tomada (ago/2026): o público inclui cliente externo.** Isso fecha a questão — para máquina
+que a NexTags não gerencia, os US$ 99/ano são a opção mais barata e limpa. As alternativas gratuitas
+só alcançam Mac gerenciado.
+
+### Alternativas que foram investigadas e NÃO servem
+
+Registrado pra ninguém gastar tempo de novo:
+
+- **Conta Apple gratuita ("Personal Team")** — assina, o `codesign -v` passa, e o `spctl` continua
+  rejeitando. É o erro mais comum do assunto.
+- **Certificado autoassinado + CA confiável no Keychain**, inclusive distribuída por perfil MDM —
+  não funciona. Gatekeeper exige Developer ID emitido pela Apple, ponto.
+- **Isenção da taxa de US$ 99** — existe, mas só para ONG reconhecida, instituição de ensino
+  credenciada ou órgão governamental. A NexTags não se qualifica.
+- **Homebrew cask com `--no-quarantine`** — removido no brew 5.1; sai de circulação de vez em
+  01/09/2026. Vale inclusive para tap próprio/privado.
+- **Trocar `.dmg` por `.pkg`** — não melhora e piora a segurança: o Installer roda como root.
+- **Microsoft Intune** — exige `.pkg` assinado com Developer ID Installer. Os US$ 99 voltam pela
+  porta dos fundos.
+
+### Alternativas que funcionam, mas só para Mac gerenciado
+
+Não resolvem o caso da NexTags (cliente externo), ficam registradas caso o público mude:
+
+- **MDM com agente próprio** (Mosyle Business FREE cobre 30 Macs de graça, permanente). O agente
+  instala como root e o arquivo nunca recebe a flag de quarentena, então o Gatekeeper não entra na
+  história e o usuário não vê aviso nenhum.
+- **Canal de entrega que não seta quarentena** (pendrive, SMB, `curl`). Atenção: essa rota saiu
+  **contestada** na verificação — não confie sem testar na prática.
+
+### A alternativa de fundo: não distribuir binário
+
+O app é um wrapper de webview, e o `tauri.conf.json` confirma que ele não usa nada nativo —
+`windows: []`, nenhum plugin, nenhum updater, nenhum deep link. Um PWA instalado via Safari
+("Arquivo → Adicionar ao Dock") ou Chrome dá janela própria, ícone no Dock e sessão isolada, com
+atrito zero, custo zero e sem Gatekeeper nenhum.
+
+O que trava essa rota: o wrapper forja user-agent de Chrome/Windows, o que sugere que
+`app.nextagsai.com.br` talvez não funcione bem no Safari. **Esse teste não foi feito** — o egress
+desta sessão bloqueia o domínio com 403 de política. Abrir o site no Safari de um Mac resolve a
+dúvida em 30 segundos, e o resultado decide se essa alternativa é viável.
 
 ## Correções feitas antes do primeiro run (jul/2026)
 
