@@ -86,10 +86,19 @@ reexportar toda hora.
 5. Ícone Android já está gerado (mipmaps), mas confirmar que `tauri android init` não sobrescreve
    com o ícone placeholder — se sobrescrever, rodar `npx tauri icon app-icon-source.png` de novo
    depois do init.
-6. Build APK: `npm run tauri android build` (gera `.apk`/`.aab` em
+   - **Atenção**: `tauri icon` só redimensiona `app-icon-source.png` 1:1 pro canvas de cada
+     densidade do `ic_launcher_foreground.png` — não deixa a margem ("safe zone") que o Android
+     precisa pra mascarar o ícone em círculo/squircle/rounded-square sem cortar o hexágono. Era
+     esse o motivo do ícone "vazar o azul" (a borda azul ficava perto demais da borda do canvas e
+     lançadores mais agressivos no corte — Samsung/MIUI/etc. — cortavam ela de forma desigual).
+     Já corrigido nos `src-tauri/icons/android/mipmap-*/ic_launcher_foreground.png` deste repo
+     (logo redimensionado pra ~60% do canvas, dentro do limite de 66dp/108dp recomendado pelo
+     Google). **Se rodar `npx tauri icon` de novo, rode `python3 scripts/fix_android_adaptive_icon.py`
+     em seguida** pra reaplicar a margem antes de gerar/buildar o projeto Android.
+6. Build APK/AAB: `npm run tauri android build` (gera `.apk`/`.aab` em
    `src-tauri/gen/android/app/build/outputs/`). Pra instalar direto num Android de teste sem Play
-   Store, `.apk` assinado em debug já serve; produção precisa keystore de release (perguntar se
-   já existe uma keystore da NexTags ou se cria nova).
+   Store, `.apk` assinado em debug já serve; produção (Play Store) precisa de AAB assinado com
+   keystore de release — ver seção "Publicação na Play Store" abaixo.
 7. **OAuth Google/Facebook no Android**: diferente do desktop, WebView Android **é** frequentemente
    bloqueada pelo Google ("disallowed_useragent") pra login OAuth — política do Google desde 2016
    contra embedded webviews em apps nativos. Se acontecer, a solução padrão é usar
@@ -97,17 +106,65 @@ reexportar toda hora.
    plugin ou WebView intent customizado). Testar primeiro antes de assumir que vai falhar; se
    falhar, esse é o ponto de maior risco/retrabalho do projeto todo.
 
+## Publicação na Play Store
+
+Nada disso pode ser feito a partir deste repo/sessão — depende de conta e credenciais do usuário
+e do toolchain Android (item "Toolchain Android" acima). É trabalho manual do lado do usuário,
+mas documentado aqui pra a sessão que for fazer o build/acompanhar poder orientar passo a passo.
+
+1. **Conta Google Play Console**: criar em https://play.google.com/console (taxa única de
+   registro, ~US$ 25). Verificação de identidade da conta de desenvolvedor pode levar de algumas
+   horas a alguns dias — vale começar esse processo o quanto antes, em paralelo com o resto.
+2. **Keystore de release**: gerar um keystore próprio pra assinar builds de produção (diferente
+   do debug). Perguntar ao usuário se já existe uma keystore da NexTags antes de criar uma nova —
+   **perder essa keystore depois de publicar significa não poder mais atualizar o app na mesma
+   ficha da Play Store**, então precisa ser guardada com backup (ex.: 1Password/cofre da empresa),
+   nunca só na máquina local.
+   ```bash
+   keytool -genkeypair -v -keystore nextags-release.keystore -alias nextags \
+     -keyalg RSA -keysize 2048 -validity 10000
+   ```
+   Configurar o Gradle do projeto gerado (`src-tauri/gen/android/app/build.gradle.kts`, seção
+   `signingConfigs`) pra usar esse keystore no build `release` — ver
+   https://v2.tauri.app/distribute/google-play/ pro passo a passo específico do Tauri (inclui como
+   referenciar keystore/senhas via variáveis de ambiente, sem commitar segredo no repo).
+3. **Build de produção**: `npm run tauri android build` com o signing configurado gera o `.aab`
+   assinado em `src-tauri/gen/android/app/build/outputs/bundle/release/`. É esse `.aab` que sobe
+   na Play Console (não o `.apk`).
+4. **Ficha da loja (Play Console → "Configurar app")**: preencher nome, descrição curta/completa,
+   categoria, e-mail de contato, **política de privacidade (URL obrigatória)** — como o app faz
+   login Google/Facebook e carrega `app.nextagsai.com.br`, essa política precisa existir e cobrir
+   isso. Também precisa: ícone 512x512 (já temos, `src-tauri/icons/icon.png`), gráfico de
+   destaque 1024x500, e pelo menos 2 screenshots de celular.
+5. **Formulários obrigatórios**: classificação de conteúdo (questionário dentro do Console),
+   "Segurança dos dados" (declarar que tipos de dado o app coleta/compartilha — relevante pelo
+   OAuth Google/Facebook e pelo carregamento do site), público-alvo, e anúncios (declarar que não
+   tem, se for o caso).
+6. **Teste antes de produção**: contas novas de desenvolvedor no Google Play são obrigadas a rodar
+   uma trilha de teste (fechado, com pelo menos ~12-20 testadores) por 14 dias corridos antes de
+   poder publicar em produção — checar o requisito atual na própria Console ao criar o app, essa
+   regra do Google muda de vez em quando. Vale já separar uma lista de e-mails de testadores
+   (equipe interna serve) pra não travar nesse passo.
+7. **Enviar pra revisão**: depois da trilha de teste, promover o release pra produção. Primeira
+   revisão do Google costuma levar de algumas horas a poucos dias.
+
 ## Coisas que NÃO fazer
 
-- Não regerar os ícones do zero — `app-icon-source.png` já está pronto e aprovado (é a marca
-  NexTags, hexágono azul, sem texto — usuário pediu explicitamente sem texto).
+- Não trocar a arte/logo do ícone — `app-icon-source.png` já está pronto e aprovado (é a marca
+  NexTags, hexágono azul, sem texto — usuário pediu explicitamente sem texto). A correção de
+  padding do ícone Android (item 5 acima) só ajusta a margem de segurança do adaptive icon, não
+  muda o desenho.
 - Não mudar a decisão de "sem abas" — é intencional.
 - Não presumir qual é o problema de UI mobile sem simular primeiro — usuário quer que seja
   descoberto na prática, não adivinhado.
+- Não commitar keystore, senhas ou service account JSON da Play Console neste repo — usar
+  variáveis de ambiente/secrets do CI ou um cofre de senhas.
 
 ## Referência rápida de arquivos
 
 - `src-tauri/src/lib.rs` — lógica da janela, menu de contexto, comando `clear_cache`
 - `src-tauri/tauri.conf.json` — config do bundle, ícones, identifier
 - `app-icon-source.png` — fonte do ícone (raiz do projeto)
+- `scripts/fix_android_adaptive_icon.py` — reaplica a margem de segurança do adaptive icon Android
+  (rodar depois de qualquer `npx tauri icon` novo)
 - `dist-cliente/` — builds prontos pra entrega desktop (não mexer, é output)
