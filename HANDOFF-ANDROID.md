@@ -60,6 +60,32 @@ $env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:Path"
 **Vale considerar persistir essas variáveis via `setx`** no início da sessão nova, pra não ter que
 reexportar toda hora.
 
+## ATUALIZAÇÃO (ago/2026) — o build Android já roda no CI
+
+O passo 2 abaixo (`tauri android init`) **não precisa mais ser feito à mão numa máquina Windows**.
+O `.github/workflows/build.yml` tem um job `android` que faz tudo em runner Linux da GitHub:
+instala JDK 17, detecta o NDK da imagem, adiciona os targets Rust, roda `android init` (necessário a
+cada run, porque `src-tauri/gen/` é gitignored), compila e anexa o APK ao release rascunho.
+
+**O APK sai assinado em DEBUG, de propósito.** Sem keystore, `tauri android build` de release
+produz `app-universal-release-unsigned.apk` — e o Android **não instala APK sem assinatura**. O de
+debug é assinado com a chave de debug do Android SDK e instala normalmente (basta permitir "fontes
+desconhecidas"). Serve para testar; não serve para produção.
+
+### Para virar APK de produção, faltam três coisas
+
+1. **Keystore da NexTags.** Perguntar se já existe uma; se não, criar com `keytool` e guardar como
+   secret do repo (base64). Importa que seja **a mesma para sempre**: o Android só aceita atualizar
+   um app instalado se a nova versão tiver a mesma assinatura. Trocar de chave obriga o usuário a
+   desinstalar e perder os dados locais.
+2. **Ajuste de UI mobile** — o passo 3 abaixo, que era o motivo original do pedido. Continua
+   pendente e não dá para fazer sem device/emulador.
+3. **OAuth Google/Facebook em WebView** — o passo 7 abaixo. Continua sendo o maior risco do projeto
+   e continua não testado.
+
+Os itens 2 e 3 exigem rodar o app num aparelho de verdade. O APK de debug do release rascunho existe
+justamente para isso.
+
 ## Próximos passos (ordem sugerida)
 
 1. **Exportar env vars acima** na sessão nova (testar `java -version`, `echo $ANDROID_HOME` antes

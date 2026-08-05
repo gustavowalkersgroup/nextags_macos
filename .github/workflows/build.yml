@@ -8,18 +8,36 @@ on:
 
 jobs:
   build:
+    # tauri-action cria o release e sobe os binarios; o GITHUB_TOKEN padrao e
+    # somente-leitura em repos novos, o que faria o passo de release falhar com 403.
+    permissions:
+      contents: write
+
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
+            rust_targets: "aarch64-apple-darwin"
+            plain_binary: false
           - platform: macos-latest
             args: "--target x86_64-apple-darwin"
-          - platform: ubuntu-latest
+            rust_targets: "x86_64-apple-darwin"
+            plain_binary: false
+          # Pinado: o conjunto de pacotes apt abaixo e valido no 24.04. O
+          # ubuntu-latest vai migrar pro 26.04, onde libappindicator3-dev nao existe mais.
+          - platform: ubuntu-24.04
             args: ""
+            rust_targets: ""
+            plain_binary: false
+          # plain_binary sobe o .exe avulso = versao portable, junto do instalador NSIS.
+          # Precisa estar definido em TODAS as entradas: o action le com
+          # getBooleanInput, que lanca erro se receber string vazia.
           - platform: windows-latest
             args: ""
+            rust_targets: ""
+            plain_binary: true
 
     runs-on: ${{ matrix.platform }}
 
@@ -34,16 +52,25 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.rust_targets }}
 
       - name: Install Linux system dependencies
-        if: matrix.platform == 'ubuntu-latest'
+        if: matrix.platform == 'ubuntu-24.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          # xdg-utils nao vem na imagem do runner e o bundler do AppImage precisa
+          # copiar o /usr/bin/xdg-open pra dentro do AppDir — sem ele o build
+          # falha com "xdg-open binary not found" depois de ja ter gerado o .deb.
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -51,7 +78,118 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
+          uploadPlainBinary: ${{ matrix.plain_binary }}
+          # O tag do release e sempre app-v<versao do tauri.conf.json>, nao o tag empurrado.
+          # O prefixo "app-" e proposital: evita que publicar o release dispare este
+          # workflow de novo pelo gatilho `push: tags: v*`.
           tagName: app-v__VERSION__
           releaseName: "NexTags AI v__VERSION__"
           releaseDraft: true
           prerelease: false
+
+  # Android e um job separado, nao uma entrada da matriz: o toolchain (JDK, SDK,
+  # NDK, targets Rust de Android) nao tem nada a ver com o build desktop.
+  android:
+    permissions:
+      contents: write
+
+    # Depende do build desktop porque e ele que cria o release rascunho onde o
+    # APK vai ser anexado.
+    needs: build
+
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Rust with Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: android
+
+      - name: Locate Android NDK
+        # A imagem do runner ja traz um ou mais NDKs. Pegar o mais novo instalado
+        # em vez de fixar versao, que quebraria quando a imagem mudasse.
+        run: |
+          set -euo pipefail
+          if [ ! -d "$ANDROID_HOME/ndk" ]; then
+            echo "Nenhum NDK na imagem; instalando via sdkmanager."
+            sdkmanager --install "ndk;27.2.12479018"
+          fi
+          NDK_VERSION="$(ls "$ANDROID_HOME/ndk" | sort -V | tail -1)"
+          echo "NDK escolhido: $NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Initialize Android project
+        # src-tauri/gen/ e gitignored (output gerado), entao o projeto Gradle
+        # precisa ser regenerado a cada run a partir do tauri.conf.json.
+        run: npm run tauri android init -- --skip-targets-install
+
+      # Aqui NAO se usa o tauri-action: a tag @v0 nao tem o input `mobile` (ele
+      # existe so no branch dev), entao ela roda `tauri build` de desktop e
+      # falha. Apontar pro @dev resolveria, mas seria depender de um branch
+      # movel de terceiro com a feature marcada EXPERIMENTAL. Chamar a CLI
+      # direto e deterministico.
+      #
+      # --debug de proposito: sem keystore, o build de release sai como
+      # app-universal-release-unsigned.apk, e o Android NAO instala APK sem
+      # assinatura. O de debug e assinado com a chave de debug e instala.
+      # Quando a NexTags fornecer uma keystore, trocar por release assinado.
+      - name: Build APK
+        run: npm run tauri android build -- --apk --debug
+
+      - name: Locate APK
+        id: apk
+        run: |
+          set -euo pipefail
+          OUT=src-tauri/gen/android/app/build/outputs/apk
+          echo "APKs gerados:"
+          find "$OUT" -name '*.apk' -type f || true
+          # O universal instala em qualquer aparelho; os por-arquitetura sao
+          # fallback. Preferir universal sempre que existir.
+          APK="$(find "$OUT" -name '*universal*debug*.apk' -type f | head -1 || true)"
+          if [ -z "$APK" ]; then
+            APK="$(find "$OUT" -name '*arm64*debug*.apk' -type f | head -1 || true)"
+          fi
+          if [ -z "$APK" ]; then
+            APK="$(find "$OUT" -name '*.apk' -type f | sort | head -1 || true)"
+          fi
+          if [ -z "$APK" ]; then
+            echo "::error::Nenhum APK encontrado em $OUT"
+            find src-tauri/gen/android/app/build/outputs -type f | head -50
+            exit 1
+          fi
+          VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          DEST="NexTags AI_${VERSION}_android-debug.apk"
+          cp "$APK" "$DEST"
+          echo "Escolhido: $APK -> $DEST"
+          echo "dest=$DEST" >> "$GITHUB_OUTPUT"
+          echo "tag=app-v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Attach APK to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ steps.apk.outputs.tag }}" \
+            "${{ steps.apk.outputs.dest }}" --clobber
