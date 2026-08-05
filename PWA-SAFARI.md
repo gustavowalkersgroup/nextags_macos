@@ -78,8 +78,18 @@ Dois detalhes que não são óbvios e estão já resolvidos nos arquivos:
 
 - **O iOS ignora transparência** no `apple-touch-icon` e compõe o que sobra sobre preto. Por isso
   esse arquivo específico foi achatado em fundo branco, enquanto os outros mantêm o alpha.
-- **O ícone maskable** tem fundo opaco e o logo em 80% do quadro. Sem isso, o recorte do Android
-  corta o logo ou mostra transparência como preto.
+- **O ícone maskable** tem fundo opaco e o logo ocupando **~60% da largura** do quadro. Sem fundo
+  opaco, o recorte do Android mostra a transparência como preto; sem a margem, ele corta o logo.
+
+  Os 60% não são chute: o Google manda manter o conteúdo dentro de um círculo de 66dp num canvas de
+  108dp, e um quadrado inscrito nesse círculo tem lado de ~57% — launchers mais agressivos
+  (Samsung, MIUI) cortam qualquer coisa além disso. É a mesma margem que
+  `scripts/fix_android_adaptive_icon.py` aplica nos ícones do app Android, depois de o azul do
+  hexágono ter sido cortado na prática.
+
+  **Se for regenerar este ícone**, cuidado: o `app-icon-source.png` tem ~24% de padding transparente
+  em volta do logo, então escalar o canvas inteiro para 60% deixaria o logo em ~45% — pequeno demais.
+  Meça o bounding box do alpha primeiro, como o script do Android faz.
 
 O `theme_color` (`#4050F0`) foi amostrado do próprio ícone da marca — é o azul do hexágono. Se o
 time de marca tiver o valor oficial, sobrescrever.
