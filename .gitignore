@@ -18,8 +18,14 @@ src-tauri/target
 # Delivery builds (regenerated, not source)
 dist-cliente
 
-# Generated mobile projects (recreated via `tauri android init` / `tauri ios init`)
-src-tauri/gen
+# Schemas gerados a cada build
+src-tauri/gen/schemas
+
+# src-tauri/gen/android E versionado de proposito: contem edicoes manuais em MainActivity.kt
+# (window insets / teclado) e AndroidManifest.xml (windowSoftInputMode) que `tauri android init`
+# sobrescreveria. O proprio Tauri gera .gitignore dentro de gen/android e gen/android/app
+# excluindo build/, jniLibs/**/*.so, tauri.properties e o Kotlin gerado.
+src-tauri/gen/apple
 
 # Editor directories and files
 .vscode/*

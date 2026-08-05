@@ -1,0 +1,14 @@
+# O wry nao configura nenhuma setting de viewport/zoom na WebView do Android: o bloco init de
+# RustWebView.kt seta apenas javaScriptEnabled, domStorageEnabled, geolocation, databaseEnabled,
+# mediaPlaybackRequiresUserGesture e javaScriptCanOpenWindowsAutomatically. Herdamos os defaults do
+# Chromium (AwSettings), onde builtInZoomControls = false, o que DESATIVA o pinch-zoom
+# (zoom multitoque exige mSupportZoom && mBuiltInZoomControls).
+#
+# O build.rs do wry expande o placeholder {{class-init}} de cada arquivo Kotlin a partir de uma env
+# var montada como WRY_{STEM_EM_MAIUSCULAS}_CLASS_INIT, e o arquivo e RustWebView.kt, daí
+# WRY_RUSTWEBVIEW_CLASS_INIT. Ele tambem emite cargo:rerun-if-env-changed, entao alterar este valor
+# reconstroi. So tem efeito quando target_os = "android"; builds Windows ignoram.
+#
+# displayZoomControls = false remove os botoes +/- em tela, mantendo so o gesto de pinca.
+[env]
+WRY_RUSTWEBVIEW_CLASS_INIT = "settings.builtInZoomControls = true; settings.displayZoomControls = false; settings.useWideViewPort = true; settings.loadWithOverviewMode = true;"

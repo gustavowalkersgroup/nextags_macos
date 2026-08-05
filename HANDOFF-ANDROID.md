@@ -1,116 +1,280 @@
 # Handoff — App Android NexTags AI (Tauri)
 
-Contexto pra sessão nova (recomendado rodar com Opus, tarefa de config nativa Android tende a
-precisar de mais raciocínio pra troubleshooting de toolchain).
+**Atualizado em 05/08/2026.** Substitui a versão anterior deste arquivo.
 
 ## Objetivo
 
-Empacotar o mesmo projeto Tauri (que já roda como app desktop Windows) também como APK Android,
-carregando `https://app.nextagsai.com.br/` numa WebView nativa. Sem abas — janela única, é
-proposital (feedback do usuário: "não tem abas né, mas acho que justamente é essa a ideia").
+Empacotar o mesmo projeto Tauri (já entregue como app desktop Windows) como APK Android,
+carregando `https://app.nextagsai.com.br/` numa WebView nativa. Janela única, sem abas — proposital.
 
-## Estado atual (o que já está pronto)
+`main` continua com o build desktop/macOS intocado. Todas as mudanças de comportamento Android são
+guardadas por `#[cfg(target_os = "android")]` / `#[cfg(desktop)]`, então não há risco para os builds
+Windows/macOS/Linux do CI.
 
-**Projeto**: `Z:\Gustavo\nextags-desktop-app` (scaffold Tauri 2, criado via `npm create tauri-app`)
+## NÃO trabalhe a partir de `Z:\Gustavo\nextags-desktop-app` diretamente
 
-**Desktop Windows já funcional e entregue**:
-- `src-tauri/src/lib.rs` — janela única carregando `APP_URL` direto (sem frontend local), UA de
-  Chrome desktop pra evitar bloqueio OAuth do Google, menu de contexto customizado (botão direito
-  → "Recarregar página" / "Limpar cache e recarregar", via `initialization_script` JS +
-  comando Rust `clear_cache` que chama `window.clear_all_browsing_data()`).
-- `src-tauri/tauri.conf.json` — `productName: "NexTags AI"`, `identifier: br.com.nextagsai.desktop`,
-  bundle targets `["nsis"]`, ícone da marca já aplicado (ver abaixo).
-- Ícone: `app-icon-source.png` (1024x1024, hexágono azul da marca, fundo transparente, extraído e
-  limpo de `nextags.jpg`) → já rodei `npx tauri icon app-icon-source.png`, gerou todos os tamanhos
-  em `src-tauri/icons/` **incluindo os mipmaps Android** (`android/mipmap-*`) e ícones iOS — não
-  precisa regenerar, só reaproveitar.
-- Build release + instalador NSIS testados e aprovados pelo usuário (login Google/Facebook
-  funcionando dentro da própria janela, cache/tradutor do Chrome não incomodam mais).
-- Entregáveis ficam em `dist-cliente/` (portable .exe + instalador .exe) — script de cópia simples,
-  repetir se gerar nova release.
+`Z:` é drive de rede mapeado (`\\nextagsdados\nextags`, DriveType 4). O `cargo-mobile2`
+canonicaliza o path para UNC (`\\nextagsdados\...`) e a validação `starts_with(root_dir)` falha:
 
-## Toolchain Android já instalado nesta máquina
-
-- **JDK 17**: `C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot` (via winget
-  `Microsoft.OpenJDK.17`)
-- **Android SDK**: `C:\Android\sdk` (cmdline-tools em `C:\Android\sdk\cmdline-tools\latest\bin`)
-  - `platform-tools`, `platforms;android-34`, `build-tools;34.0.0` instalados
-  - Licenças já aceitas
-- **NDK**: `C:\Android\sdk\ndk\27.0.12077973`
-
-**Variáveis de ambiente que a sessão precisa exportar** (não estão persistidas no perfil do
-usuário ainda — só usadas ad-hoc nas sessões anteriores):
-
-```bash
-export JAVA_HOME="/c/Program Files/Microsoft/jdk-17.0.20.8-hotspot"
-export ANDROID_HOME=/c/Android/sdk
-export NDK_HOME=/c/Android/sdk/ndk/27.0.12077973
+```
+AssetDirOutsideOfAppRoot { asset_dir: "assets", root_dir: "...\src-tauri" }
 ```
 
-Se for rodar via PowerShell (recomendado pros comandos do `tauri android`, que tendem a invocar
-`.bat`/gradle nativos do Windows melhor por lá do que via Git Bash):
+Mesmo bug do issue tauri#8715. **`tauri android init` e `tauri android build` não rodam de share
+SMB.** Copie o projeto pra um caminho local (ex.: `C:\build\nextags-desktop-app`, via
+`robocopy /E /XD node_modules target .git`) e trabalhe de lá. Confirmado empiricamente: em `C:` o
+init/build passa. Depois de gerar/atualizar `src-tauri/gen/android`, `.cargo/config.toml`, etc.
+localmente, sincronize as mudanças relevantes de volta para o repo em `Z:` antes de commitar.
+
+## Setup no PC local
+
+### 1. Modo de Desenvolvedor do Windows — OBRIGATÓRIO
+
+O `cargo-mobile2` cria um **symlink** do `.so` para `jniLibs`. Sem privilégio o build morre:
+
+```
+Failed to create a symbolic link ... libtauri_app_lib.so
+Creation symbolic link is not allowed for this system.
+```
+
+Uma conta não-elevada e sem `SeCreateSymbolicLinkPrivilege` não consegue. Em PowerShell **como
+administrador**:
 
 ```powershell
-$env:JAVA_HOME = "C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot"
-$env:ANDROID_HOME = "C:\Android\sdk"
-$env:NDK_HOME = "C:\Android\sdk\ndk\27.0.12077973"
-$env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:Path"
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
 ```
 
-**Vale considerar persistir essas variáveis via `setx`** no início da sessão nova, pra não ter que
-reexportar toda hora.
+Ou pela GUI: Configurações → Privacidade e segurança → Para desenvolvedores → Modo de
+desenvolvedor. Efeito imediato, sem reboot.
 
-## Próximos passos (ordem sugerida)
+Contorno sem admin/dev mode (só se travar de vez): compile o `.so`, copie manualmente para
+`jniLibs/<abi>/` e rode o Gradle direto, pulando a task Rust:
 
-1. **Exportar env vars acima** na sessão nova (testar `java -version`, `echo $ANDROID_HOME` antes
-   de seguir).
-2. Rodar `npm run tauri android init` dentro de `Z:\Gustavo\nextags-desktop-app` — isso gera a
-   pasta `src-tauri/gen/android/` com projeto Gradle completo.
-3. **Ajustar UI mobile** — esse é o motivo original do pedido ("UIX zuada"). Testar
-   `npm run tauri android dev` (emulador ou device físico via USB debugging) e observar o que
-   quebra no layout do site em viewport mobile:
-   - Se for CSS responsivo do próprio site (`app.nextagsai.com.br` não adaptado pra telas
-     pequenas) — não dá pra corrigir pelo wrapper, precisa mexer no CSS do site em si (fora de
-     escopo deste projeto Tauri, seria outro time).
-   - Se for comportamento do WebView (zoom automático, teclado cobrindo campo de input, gestos de
-     navegação por swipe conflitando) — dá pra corrigir via `initialization_script` (mesmo padrão
-     já usado no desktop pro menu de contexto) injetando CSS/JS: `viewport` meta fixo, prevenção
-     de double-tap-zoom, ajuste de `resize` ao abrir teclado, etc. **Recomendo simular o site no
-     Chrome DevTools em viewport mobile primeiro** (ferramenta `chrome-devtools-mcp` disponível)
-     antes de decidir o que precisa de fix — usuário pediu explicitamente pra descobrir isso
-     simulando, não assumir.
-4. **Menu de contexto / cache no mobile**: Android não tem "botão direito" — provavelmente vale
-   um long-press no título ou um botão flutuante (FAB) discreto com as mesmas duas ações
-   (recarregar / limpar cache). Perguntar ao usuário preferência antes de implementar (long-press
-   vs. botão visível vs. pull-to-refresh nativo pra reload).
-5. Ícone Android já está gerado (mipmaps), mas confirmar que `tauri android init` não sobrescreve
-   com o ícone placeholder — se sobrescrever, rodar `npx tauri icon app-icon-source.png` de novo
-   depois do init.
-   - **Atenção**: `tauri icon` só redimensiona `app-icon-source.png` 1:1 pro canvas de cada
-     densidade do `ic_launcher_foreground.png` — não deixa a margem ("safe zone") que o Android
-     precisa pra mascarar o ícone em círculo/squircle/rounded-square sem cortar o hexágono. Era
-     esse o motivo do ícone "vazar o azul" (a borda azul ficava perto demais da borda do canvas e
-     lançadores mais agressivos no corte — Samsung/MIUI/etc. — cortavam ela de forma desigual).
-     Já corrigido nos `src-tauri/icons/android/mipmap-*/ic_launcher_foreground.png` deste repo
-     (logo redimensionado pra ~60% do canvas, dentro do limite de 66dp/108dp recomendado pelo
-     Google). **Se rodar `npx tauri icon` de novo, rode `python3 scripts/fix_android_adaptive_icon.py`
-     em seguida** pra reaplicar a margem antes de gerar/buildar o projeto Android.
-6. Build APK/AAB: `npm run tauri android build` (gera `.apk`/`.aab` em
-   `src-tauri/gen/android/app/build/outputs/`). Pra instalar direto num Android de teste sem Play
-   Store, `.apk` assinado em debug já serve; produção (Play Store) precisa de AAB assinado com
-   keystore de release — ver seção "Publicação na Play Store" abaixo.
-7. **OAuth Google/Facebook no Android**: diferente do desktop, WebView Android **é** frequentemente
-   bloqueada pelo Google ("disallowed_useragent") pra login OAuth — política do Google desde 2016
-   contra embedded webviews em apps nativos. Se acontecer, a solução padrão é usar
-   `Custom Tabs`/browser do sistema pra etapa de login (Tauri não tem isso pronto — precisaria de
-   plugin ou WebView intent customizado). Testar primeiro antes de assumir que vai falhar; se
-   falhar, esse é o ponto de maior risco/retrabalho do projeto todo.
+```bash
+cp src-tauri/target/aarch64-linux-android/debug/libtauri_app_lib.so \
+   src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/
+cd src-tauri/gen/android && ./gradlew assembleArm64Debug -x rustBuildArm64Debug
+```
+
+Isso **não** contorna `tauri android dev` (o Gradle chama `tauri android android-studio-script`,
+que refaz o mesmo symlink e ainda espera um addr-file de dev server). Só serve pra `assembleDebug`
+mesmo assim tende a falhar se a task `rustBuildArm64Debug` for reexecutada — o caminho confiável é
+sempre ativar o Developer Mode e rodar `npm run tauri android build` normal.
+
+### 2. Toolchain
+
+Versões exatas usadas (replicar):
+
+| Componente | Versão / caminho |
+|---|---|
+| JDK | Microsoft OpenJDK 17.0.20 (`winget install Microsoft.OpenJDK.17`) |
+| Android SDK | cmdline-tools + `platform-tools` |
+| SDK platforms | **`android-36`** (o Gradle gerado usa `compileSdk = 36` / `targetSdk = 36`) |
+| build-tools | `36.0.0` |
+| NDK | `27.0.12077973` |
+| Rust targets | `aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android` |
+| tauri-cli | 2.11.4+ (via `@tauri-apps/cli ^2`) |
+
+```powershell
+[Environment]::SetEnvironmentVariable('JAVA_HOME','<caminho do jdk 17>','User')
+[Environment]::SetEnvironmentVariable('ANDROID_HOME','<caminho do sdk>','User')
+[Environment]::SetEnvironmentVariable('NDK_HOME','<sdk>\ndk\27.0.12077973','User')
+```
+
+Use `[Environment]::SetEnvironmentVariable`, **não `setx`** — `setx` trunca em 1024 caracteres e
+pode corromper o `Path`.
+
+```bash
+rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+```
+
+`platforms;android-34` **não basta**: o `build.gradle.kts` gerado pede `compileSdk = 36`.
+
+### 3. Device
+
+USB debugging ligado, `adb devices` deve listar o aparelho. Para apenas instalar um APK pronto,
+só `platform-tools` é necessário; para compilar, o toolchain completo.
+
+### Ordem que importa: `tauri icon` DEPOIS de `android init`
+
+`tauri android init` sobrescreve os mipmaps com o placeholder do template. Rodar
+`npx tauri icon app-icon-source.png` **depois** do init corrige (verificado por hash). Se
+reinicializar o projeto Android, repita — e rode
+`python3 scripts/fix_android_adaptive_icon.py` em seguida pra reaplicar a margem de segurança do
+adaptive icon (ver "Correção do ícone" abaixo).
+
+## Correção do ícone adaptativo Android
+
+`tauri icon` só redimensiona `app-icon-source.png` 1:1 pro canvas de cada densidade do
+`ic_launcher_foreground.png` — não deixa a margem ("safe zone") que o Android precisa pra mascarar
+o ícone em círculo/squircle/rounded-square sem cortar o hexágono (~79% do canvas, acima do limite
+de 66dp/108dp ~61% recomendado pelo Google). Isso fazia a borda azul "vazar"/cortar de forma
+desigual em launchers mais agressivos (Samsung/MIUI/etc.).
+
+Corrigido: logo redimensionado pra ~60% do canvas em `src-tauri/icons/android/mipmap-*/`.
+`scripts/fix_android_adaptive_icon.py` reaplica essa margem sempre que os ícones forem
+regenerados via `tauri icon` — rodar de novo depois de qualquer `npx tauri icon`.
+
+## Medições sobre a UI mobile — não repita este trabalho
+
+Chrome DevTools em 390×844 e `curl` com três UAs:
+
+| Teste | Resultado |
+|---|---|
+| HTML servido: UA desktop vs mobile vs WebView | **md5 idêntico** — o servidor não faz UA sniffing |
+| Inbox a 390px, UA mobile | 50 conversas, overflow horizontal **0** |
+| Inbox a 390px, UA desktop do `lib.rs` | **idêntico** — mesmas 50 linhas, mesma altura 4972px |
+| Viewport meta do site | `width=device-width, initial-scale=1.0, shrink-to-fit=no` (sem `viewport-fit=cover`) |
+
+**Conclusões:**
+
+1. A UA desktop hardcoded **não** degrada o layout mobile deste site. Mantida (serve ao OAuth do
+   Google no Windows). O research automatizado afirmou o contrário em tese; a medição refuta no
+   caso concreto.
+2. O site **tem** layout responsivo funcional em largura de celular. Não há overflow.
+3. Sem `viewport-fit=cover`, `env(safe-area-inset-*)` é 0 → fix de safe-area só por CSS injetado
+   **não funciona**. Tem de ser nativo (ver `MainActivity.kt` abaixo).
+4. "Nenhuma conversa aparece" era a pasta **Arquivadas**, genuinamente vazia. Não era bug.
+5. `smallTargets: 3` (alvos de toque pequenos) — não é problema.
+6. **`tinyFont: 146`** — 146 nós de texto com `font-size < 12px`. Principal queixa real de
+   legibilidade, e é CSS do site. Ver "Aberto".
+7. `button.ktt10-btn` (widget de suporte do site) é `position:fixed` 50×50 no canto inferior
+   direito. Por isso **não usar FAB** — decisão já tomada.
+
+### Bug do site, fora do escopo do wrapper
+
+`vue-easy-lightbox.umd.min.js` carrega **antes** de `vue.min.js` e morre com
+`Uncaught TypeError: Cannot read properties of undefined (reading 'extend')`. O lightbox de imagem
+não registra. É ordem de `<script>` no site — reportar ao time do site.
+
+## Fatos verificados no source dos crates (tauri 2.11.5 / wry 0.55.1 / tao 0.35.3)
+
+Levantados por research com verificação adversarial, lendo os crates vendorizados em disco.
+
+1. `WebviewWindowBuilder` dentro de `setup()` **funciona** no Android; `app.windows` deve
+   continuar `[]`. Não mover a webview para a config.
+2. No Android, `inner_size` / `min_inner_size` / `title` / `resizable` / `decorations` são
+   **silenciosamente ignorados** (tao: `// FIXME this ignores requested window attributes`).
+3. `.user_agent()` **aplica** no Android (vai para `WebSettings.setUserAgentString`).
+4. **Init scripts rodam 2× em URL remota** no Android (`addDocumentStartJavaScript` **e** de novo
+   em `RustWebViewClient.onPageStarted`, porque https não é interceptada por custom protocol).
+   Scripts injetados **precisam ser idempotentes**. Já tratado no código.
+5. `clear_all_browsing_data()` existe no Android mas limpa **só** cache/histórico/form data —
+   **não** cookies, localStorage, IndexedDB nem service workers. No Windows a WebView2 limpa tudo.
+   "Limpar cache" significa menos no Android; documentar para o usuário.
+6. **`invoke('clear_cache')` estava quebrado — inclusive no build Windows já entregue.** Desde o
+   tauri 2.11.1, IPC de origem não-local é rejeitado sem uma capability com `remote.urls`.
+   `app.nextagsai.com.br` é não-local e nenhuma capability declarava isso. Passava despercebido
+   porque o JS chamava `.finally(() => location.reload())` — a página recarregava e parecia
+   funcionar, mas o cache nunca era limpo. **Corrigido** (`build.rs` + `capabilities/remote.json`).
+   Confirmar no console/logcat quando testar.
+7. `app.security.dangerousRemoteDomainIpcAccess` **não existe** no Tauri 2 (só no módulo de
+   migração do v1). Não tente usar — `deny_unknown_fields` rejeita a config.
+8. O padrão `"https://app.nextagsai.com.br"` (sem path) casa com qualquer path/query/hash. Mas
+   `https://*.nextagsai.com.br` **não** casa com o domínio apex.
+9. `android:usesCleartextTraffic` não precisa mudar (site é https). Se houver sub-recurso em http
+   puro, será bloqueado no release — auditar mixed content no site, não habilitar cleartext.
+10. wry **não configura nenhuma setting de viewport/zoom**. Herda defaults do Chromium, onde
+    `builtInZoomControls = false` → **pinch-zoom desativado**. Corrigido via
+    `src-tauri/.cargo/config.toml`.
+11. Manifest gerado não tinha `windowSoftInputMode`; com `targetSdk 36` o manifest sozinho **não
+    resolve** o teclado, e `window.visualViewport` não atualiza quando o IME abre (tauri#10631),
+    logo o site não consegue se defender. Precisa de inset listener nativo. Corrigido.
+12. Rotação **não** recria a Activity (`configChanges` inclui `orientation|screenSize`), então os
+    init scripts não re-rodam ao girar.
+
+## Mudanças de comportamento Android já feitas
+
+| Arquivo | O quê |
+|---|---|
+| `src-tauri/src/lib.rs` | Menu compartilhado com guarda de idempotência. Android: **long-press** (550ms) abre menu com "Recarregar" + "Limpar cache e recarregar"; **pull-to-refresh** (90px) recarrega. Listeners todos `passive`. `inner_size`/`min_inner_size` agora sob `#[cfg(desktop)]`. Erro de `build()` logado em vez de panic opaco. |
+| `src-tauri/build.rs` | `app_manifest` declarando o comando `clear_cache` (gera a permissão `allow-clear-cache`). |
+| `src-tauri/capabilities/remote.json` | Capability com `remote.urls` liberando `clear_cache` para a origem remota. Corrige o item 6 acima **no desktop também**. |
+| `src-tauri/.cargo/config.toml` | `WRY_RUSTWEBVIEW_CLASS_INIT` habilitando `builtInZoomControls` (pinch-zoom), `displayZoomControls=false`, `useWideViewPort`, `loadWithOverviewMode`. Só afeta `target_os = "android"`. |
+| `gen/android/.../AndroidManifest.xml` | `android:windowSoftInputMode="adjustResize"`. |
+| `gen/android/.../MainActivity.kt` | `OnApplyWindowInsetsListener` aplicando `systemBars` + `ime` como padding. Resolve edge-to-edge (barra fixa de 48px do site atrás da status bar) e teclado. |
+| `.gitignore` | `src-tauri/gen` → `src-tauri/gen/schemas` + `src-tauri/gen/apple`. `gen/android` passa a ser versionado. |
+
+O nome da env var do item do pinch-zoom foi confirmado no source: o `build.rs` do wry monta
+`WRY_{STEM_EM_MAIÚSCULAS}_CLASS_INIT` por arquivo Kotlin, e o arquivo é `RustWebView.kt`, daí
+`WRY_RUSTWEBVIEW_CLASS_INIT`. Ele também emite `cargo:rerun-if-env-changed`.
+
+### Por que `gen/android` é versionado
+
+Tauri **já gera** `.gitignore` dentro de `gen/android` e `gen/android/app` excluindo `build/`,
+`jniLibs/**/*.so`, `tauri.properties`, `tauri.build.gradle.kts` e o Kotlin gerado — ou seja, o
+diretório foi feito para ser commitado. As edições em `MainActivity.kt` e `AndroidManifest.xml`
+seriam perdidas por um `tauri android init` e não sobrevivem se o diretório for ignorado.
+
+**Se rodar `tauri android init` de novo, confira o diff desses dois arquivos antes de commitar.**
+
+## Copiar e colar / seleção de texto
+
+Não há tratamento nativo específico de copy/paste no wrapper — a WebView Android padrão já
+oferece seleção de texto e copiar/colar nativamente (menu contextual do sistema ao segurar o
+dedo sobre texto). O long-press custom (550ms) do menu de recarregar/limpar cache é registrado de
+forma passiva e não deveria capturar o long-press sobre texto selecionável, mas **isso precisa ser
+validado num device físico** — é o item 3 de "Validar no device" abaixo. Se o long-press do menu
+"roubar" o long-press de seleção de texto, a correção é aumentar o delay ou checar
+`window.getSelection().toString()` antes de abrir o menu customizado.
+
+## Estado do build
+
+- Toolchain Android validada de ponta a ponta.
+- `cargo check` desktop passa limpo com as mudanças novas.
+- Target `aarch64-linux-android` compila com as mudanças novas.
+- APK debug (arm64-v8a) gerado com sucesso após ativar Developer Mode.
+
+## Próximos passos
+
+1. `npm run tauri android dev` com o celular plugado (ou instalar o `.apk` gerado via `adb install -r`).
+2. **Validar no device**, em ordem de risco:
+   - **OAuth Google/Facebook.** Maior risco do projeto. WebView Android é frequentemente
+     bloqueada pelo Google (`disallowed_useragent`). A UA desktop spoofada pode ou não passar. Se
+     bloquear, a saída padrão é Custom Tabs para a etapa de login, e aí vem o problema de o cookie
+     ficar no cookie jar do Chrome e não na WebView. É o maior retrabalho potencial do projeto.
+   - Init script chegou? No logcat, procurar erro de `clear_cache`; no console da WebView, checar
+     `typeof window.__TAURI__` e `window.__nextagsMenuInstalled`. Existe issue aberta
+     (tauri#7863) de init script não rodar em domínio remoto no Android — verificar, não presumir.
+   - Long-press abre o menu sem atropelar seleção de texto nem long-press do próprio site (ver
+     "Copiar e colar" acima).
+   - Pull-to-refresh não briga com a lista de conversas do inbox (ela tem `overflowY` próprio e
+     ~4972px de altura). O código só arma quando o container sob o dedo **e** a página estão no topo.
+   - Teclado: abrir uma conversa e focar o campo de mensagem. O campo deve subir, não ficar coberto.
+   - Status bar / nav bar não cobrindo a barra fixa de 48px do site.
+   - Pinch-zoom funcionando (ajuda com os 146 nós de fonte < 12px).
+   - "Limpar cache": confirmar que não erra mais no ACL. Lembrar que no Android não derruba a
+     sessão (não limpa cookies).
+3. Se o pinch-zoom não resolver a legibilidade, decidir sobre os 146 nós com fonte < 12px. É CSS do
+   site. Opções: pedir ajuste ao time do site (correto), ou injetar CSS de mínimo de fonte pelo
+   wrapper (risco de quebrar layout — medir antes).
+4. Build release: precisa de keystore (ver "Publicação na Play Store" abaixo). Debug-signed serve
+   para teste interno, não para distribuição.
+
+## Aberto / não resolvido
+
+- **Research de OAuth em WebView Android não foi feito.** Em aberto: o Google ainda bloqueia
+  embedded WebView em 2026? A UA desktop spoofada passa? `tauri-plugin-opener` abre Custom Tabs no
+  Android? O cookie sobrevive ao ida-e-volta Custom Tab → WebView (provavelmente **não**, cookie
+  jars separados)?
+- **Research de `identifier` por plataforma não foi feito.** Pergunta:
+  `src-tauri/tauri.android.conf.json` permite sobrescrever `identifier` só no Android? Hoje o
+  applicationId Android é `br.com.nextagsai.desktop` — funciona, mas "desktop" no ID de um app
+  Android é estranho para a Play Store. Mudar o `identifier` global quebraria o caminho de upgrade
+  do NSIS já entregue (instalaria lado a lado em vez de atualizar). **Decidir antes de publicar**;
+  mudar depois é troca de identidade do app.
+- **Emulador não instalou** numa tentativa anterior. O `sdkmanager` baixa, descompacta até 100%,
+  registra em `.knownPackages` e **não grava no disco** — `emulator.exe` e `system.img` não existem
+  em lugar nenhum, e reinstalar sai com exit 0 sem baixar nada. Contorno: apagar
+  `<sdk>\.knownPackages` e reinstalar, ou usar o SDK Manager do Android Studio. Com device físico,
+  não é bloqueador.
+- APK debug tem ~230 MB (`.so` não-stripado, 2 ABIs) ou ~123 MB (só arm64). Release com
+  `--target aarch64` e symbols stripados fica menor. Não otimizado ainda.
 
 ## Publicação na Play Store
 
-Nada disso pode ser feito a partir deste repo/sessão — depende de conta e credenciais do usuário
-e do toolchain Android (item "Toolchain Android" acima). É trabalho manual do lado do usuário,
-mas documentado aqui pra a sessão que for fazer o build/acompanhar poder orientar passo a passo.
+Depende de conta e credenciais do usuário — trabalho manual do lado do usuário, documentado aqui
+pra a sessão que for acompanhar poder orientar passo a passo.
 
 1. **Conta Google Play Console**: criar em https://play.google.com/console (taxa única de
    registro, ~US$ 25). Verificação de identidade da conta de desenvolvedor pode levar de algumas
@@ -148,22 +312,33 @@ mas documentado aqui pra a sessão que for fazer o build/acompanhar poder orient
 7. **Enviar pra revisão**: depois da trilha de teste, promover o release pra produção. Primeira
    revisão do Google costuma levar de algumas horas a poucos dias.
 
-## Coisas que NÃO fazer
+## Decisões já tomadas — não relitigar
 
-- Não trocar a arte/logo do ícone — `app-icon-source.png` já está pronto e aprovado (é a marca
-  NexTags, hexágono azul, sem texto — usuário pediu explicitamente sem texto). A correção de
-  padding do ícone Android (item 5 acima) só ajusta a margem de segurança do adaptive icon, não
-  muda o desenho.
-- Não mudar a decisão de "sem abas" — é intencional.
-- Não presumir qual é o problema de UI mobile sem simular primeiro — usuário quer que seja
-  descoberto na prática, não adivinhado.
-- Não commitar keystore, senhas ou service account JSON da Play Console neste repo — usar
+- **Sem abas**, janela única. Proposital.
+- **Sem FAB.** O canto inferior direito já é do widget de suporte do site. Recarregar fica em
+  pull-to-refresh **e** no long-press; limpar cache só no long-press.
+- **Não regerar o ícone do zero.** `app-icon-source.png` está aprovado (hexágono azul da marca, sem
+  texto). Só rodar `tauri icon` quando o init sobrescrever, seguido de
+  `fix_android_adaptive_icon.py`.
+- **Manter a UA desktop.** Medido: não afeta o layout mobile, e serve ao OAuth.
+- **Não presumir qual é o problema de UI mobile sem simular primeiro.**
+- **Não commitar keystore, senhas ou service account JSON da Play Console neste repo** — usar
   variáveis de ambiente/secrets do CI ou um cofre de senhas.
+
+## Armadilha de shell que gerou diagnóstico errado
+
+`comando | tail -20; echo "EXIT=$?"` reporta o exit code do **`tail`**, não do comando. Isso fez
+builds falhados parecerem sucesso. Use `${PIPESTATUS[0]}`.
 
 ## Referência rápida de arquivos
 
-- `src-tauri/src/lib.rs` — lógica da janela, menu de contexto, comando `clear_cache`
+- `src-tauri/src/lib.rs` — janela, menu de contexto/long-press, pull-to-refresh, comando `clear_cache`
+- `src-tauri/build.rs` — manifest de comandos/permissões
+- `src-tauri/capabilities/remote.json` — capability de IPC remoto (`clear_cache`)
+- `src-tauri/.cargo/config.toml` — flags de WebView Android (pinch-zoom)
 - `src-tauri/tauri.conf.json` — config do bundle, ícones, identifier
+- `src-tauri/gen/android/.../MainActivity.kt` — insets nativos (status bar/teclado)
+- `src-tauri/gen/android/.../AndroidManifest.xml` — `windowSoftInputMode`
 - `app-icon-source.png` — fonte do ícone (raiz do projeto)
 - `scripts/fix_android_adaptive_icon.py` — reaplica a margem de segurança do adaptive icon Android
   (rodar depois de qualquer `npx tauri icon` novo)
