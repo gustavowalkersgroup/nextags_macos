@@ -47,8 +47,37 @@ reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_D
 Ou pela GUI: Configurações → Privacidade e segurança → Para desenvolvedores → Modo de
 desenvolvedor. Efeito imediato, sem reboot.
 
-Contorno sem admin/dev mode (só se travar de vez): compile o `.so`, copie manualmente para
-`jniLibs/<abi>/` e rode o Gradle direto, pulando a task Rust:
+## ATUALIZAÇÃO (ago/2026) — o build Android já roda no CI
+
+`tauri android init` **não precisa mais ser feito à mão numa máquina Windows** pra gerar o APK de
+teste. O `.github/workflows/build.yml` tem um job `android` que faz tudo em runner Linux da
+GitHub: instala JDK 17, detecta o NDK da imagem, adiciona os targets Rust, roda `android init`
+(necessário a cada run, porque `src-tauri/gen/` local é gitignored nesse fluxo do CI), compila e
+anexa o APK ao release rascunho (`gh release view app-v0.1.0`).
+
+**O APK do CI sai assinado em DEBUG, de propósito.** Sem keystore, `tauri android build` de release
+produz `app-universal-release-unsigned.apk` — e o Android **não instala APK sem assinatura**. O de
+debug é assinado com a chave de debug do Android SDK e instala normalmente (basta permitir "fontes
+desconhecidas"). Serve para testar; não serve para produção.
+
+O setup local abaixo (Developer Mode, toolchain, symlink) continua valendo pra quem for iterar com
+`tauri android dev` + device físico plugado — o CI não substitui isso, só o build/distribuição do
+APK de teste.
+
+### Para virar APK de produção, faltam três coisas
+
+1. **Keystore da NexTags.** Perguntar se já existe uma; se não, criar com `keytool` e guardar como
+   secret do repo (base64). Importa que seja **a mesma para sempre**: o Android só aceita atualizar
+   um app instalado se a nova versão tiver a mesma assinatura. Trocar de chave obriga o usuário a
+   desinstalar e perder os dados locais.
+2. **Ajuste de UI mobile** validado num device de verdade — ver "Próximos passos" abaixo.
+3. **OAuth Google/Facebook em WebView** — continua sendo o maior risco do projeto e continua não
+   testado (ver "Aberto").
+
+### Contorno sem Developer Mode/admin (só se travar de vez)
+
+Compile o `.so`, copie manualmente para `jniLibs/<abi>/` e rode o Gradle direto, pulando a task
+Rust:
 
 ```bash
 cp src-tauri/target/aarch64-linux-android/debug/libtauri_app_lib.so \
