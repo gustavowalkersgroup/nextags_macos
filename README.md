@@ -13,6 +13,12 @@ build, onde baixar os artefatos e o que ainda esta pendente (assinatura Apple).
 
 Para Android, veja [HANDOFF-ANDROID.md](HANDOFF-ANDROID.md).
 
+## Instalar sem app (PWA)
+
+Existe uma rota que dispensa binário, assinatura e loja: instalar o site como aplicativo pelo
+próprio navegador. Passo a passo do usuário e o que o site precisa servir estão em
+[PWA-SAFARI.md](PWA-SAFARI.md), com os ícones e o `manifest.json` já prontos em `pwa/`.
+
 ## Desenvolvimento local
 
 Requer [Rust](https://rustup.rs/) e Node 20+, mais as
@@ -27,6 +33,13 @@ npm run tauri build   # gera o bundle da plataforma atual
 Os alvos de bundle sao definidos por plataforma: `nsis` no Windows (`tauri.conf.json`),
 `app`/`dmg` no macOS (`tauri.macos.conf.json`) e `deb`/`appimage` no Linux
 (`tauri.linux.conf.json`).
+
+O nome do executavel tambem varia por plataforma: `NexTags AI` no Windows e macOS (onde nome com
+espaco e o padrao) e `nextags-ai` no Linux — la o `.desktop` gerado usa `Exec=` sem aspas, e um
+espaco no nome quebraria o atalho.
+
+Android sai de um job separado no CI (`tauri android init` + `android build`), porque o toolchain
+(JDK, SDK, NDK) nao tem relacao com o build desktop.
 
 ## Estrutura
 
