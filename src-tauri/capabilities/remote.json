@@ -1,0 +1,9 @@
+{
+  "identifier": "remote-app",
+  "description": "Permite que a pagina remota app.nextagsai.com.br chame o comando clear_cache. Desde o tauri 2.11.1, IPC de origem nao-local e rejeitado sem uma capability com remote.urls.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://app.nextagsai.com.br"]
+  },
+  "permissions": ["allow-clear-cache"]
+}
