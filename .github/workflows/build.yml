@@ -93,6 +93,10 @@ jobs:
     permissions:
       contents: write
 
+    # Depende do build desktop porque e ele que cria o release rascunho onde o
+    # APK vai ser anexado.
+    needs: build
+
     runs-on: ubuntu-24.04
 
     steps:
@@ -141,18 +145,51 @@ jobs:
         # precisa ser regenerado a cada run a partir do tauri.conf.json.
         run: npm run tauri android init -- --skip-targets-install
 
+      # Aqui NAO se usa o tauri-action: a tag @v0 nao tem o input `mobile` (ele
+      # existe so no branch dev), entao ela roda `tauri build` de desktop e
+      # falha. Apontar pro @dev resolveria, mas seria depender de um branch
+      # movel de terceiro com a feature marcada EXPERIMENTAL. Chamar a CLI
+      # direto e deterministico.
+      #
+      # --debug de proposito: sem keystore, o build de release sai como
+      # app-universal-release-unsigned.apk, e o Android NAO instala APK sem
+      # assinatura. O de debug e assinado com a chave de debug e instala.
+      # Quando a NexTags fornecer uma keystore, trocar por release assinado.
       - name: Build APK
-        uses: tauri-apps/tauri-action@v0
+        run: npm run tauri android build -- --apk --debug
+
+      - name: Locate APK
+        id: apk
+        run: |
+          set -euo pipefail
+          OUT=src-tauri/gen/android/app/build/outputs/apk
+          echo "APKs gerados:"
+          find "$OUT" -name '*.apk' -type f || true
+          # O universal instala em qualquer aparelho; os por-arquitetura sao
+          # fallback. Preferir universal sempre que existir.
+          APK="$(find "$OUT" -name '*universal*debug*.apk' -type f | head -1 || true)"
+          if [ -z "$APK" ]; then
+            APK="$(find "$OUT" -name '*arm64*debug*.apk' -type f | head -1 || true)"
+          fi
+          if [ -z "$APK" ]; then
+            APK="$(find "$OUT" -name '*.apk' -type f | sort | head -1 || true)"
+          fi
+          if [ -z "$APK" ]; then
+            echo "::error::Nenhum APK encontrado em $OUT"
+            find src-tauri/gen/android/app/build/outputs -type f | head -50
+            exit 1
+          fi
+          VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          DEST="NexTags AI_${VERSION}_android-debug.apk"
+          cp "$APK" "$DEST"
+          echo "Escolhido: $APK -> $DEST"
+          echo "dest=$DEST" >> "$GITHUB_OUTPUT"
+          echo "tag=app-v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Attach APK to draft release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          mobile: android
-          # --debug de proposito: sem keystore, o build de release sai como
-          # app-universal-release-unsigned.apk, e o Android NAO instala APK sem
-          # assinatura. O APK de debug e assinado com a chave de debug e instala.
-          # Quando a NexTags fornecer uma keystore, trocar por release assinado.
-          args: "--apk --debug"
-          tagName: app-v__VERSION__
-          releaseName: "NexTags AI v__VERSION__"
-          releaseDraft: true
-          prerelease: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ steps.apk.outputs.tag }}" \
+            "${{ steps.apk.outputs.dest }}" --clobber
