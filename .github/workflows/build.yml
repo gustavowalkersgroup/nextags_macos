@@ -76,6 +76,13 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Assinatura Authenticode do instalador Windows. So faz efeito depois que
+          # os secrets WINDOWS_CERTIFICATE (arquivo .pfx em base64) e
+          # WINDOWS_CERTIFICATE_PASSWORD forem cadastrados no repo — sem eles, ficam
+          # vazios e o tauri-action pula a assinatura como hoje (SmartScreen continua
+          # bloqueando ate isso ser configurado com um certificado comprado de uma CA).
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           args: ${{ matrix.args }}
           uploadPlainBinary: ${{ matrix.plain_binary }}
@@ -84,8 +91,71 @@ jobs:
           # workflow de novo pelo gatilho `push: tags: v*`.
           tagName: app-v__VERSION__
           releaseName: "NexTags AI v__VERSION__"
+          releaseBody: |
+            App desktop e mobile do NexTags AI: abre `app.nextagsai.com.br` em janela própria, com
+            ícone e menu próprios — sistema feito para não precisar abrir o navegador toda vez.
+
+            ## O que baixar
+
+            | Seu aparelho | Arquivo | Observação |
+            |---|---|---|
+            | Windows | `..._x64-setup.exe` | Instalador — o caminho normal |
+            | Windows | `..._windows_x64.exe` | Portátil: não instala nada, abre direto |
+            | Mac com chip Apple (M1/M2/M3/M4) | `..._aarch64.dmg` | Veja o passo extra no README |
+            | Mac com Intel | `..._x64.dmg` | Veja o passo extra no README |
+            | Android | `..._android-debug.apk` | Versão de teste |
+            | Linux | `.deb` ou `.AppImage` | `.deb` p/ Ubuntu/Debian, `.AppImage` roda em qualquer distro |
+
+            Windows e macOS avisam que o app "não é de um desenvolvedor reconhecido" na primeira
+            abertura — o app ainda não tem assinatura digital paga, mas o arquivo é seguro. Passo a
+            passo para abrir mesmo assim: [README do projeto](https://github.com/gustavowalkersgroup/nextags_macos#baixar).
           releaseDraft: true
           prerelease: false
+
+      - name: Nomear artefatos de forma amigável
+        # So cosmetico (o "label" do asset no GitHub, exibido no lugar do nome do
+        # arquivo) — nunca deve derrubar o build por causa disso, daí sem "set -e".
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          TAG="app-v${VERSION}"
+          # /releases/tags/{tag} nao retorna release em rascunho; /releases lista
+          # tudo, entao filtra pela tag aqui.
+          RELEASE_ID="$(gh api "repos/${{ github.repository }}/releases" --paginate \
+            --jq "[.[] | select(.tag_name == \"$TAG\")][0].id")"
+
+          label_asset() {
+            local suffix="$1" label="$2" id
+            id="$(gh api "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" --paginate \
+              --jq "[.[] | select(.name | endswith(\"$suffix\"))][0].id")"
+            if [ -n "$id" ] && [ "$id" != "null" ]; then
+              gh api -X PATCH "repos/${{ github.repository }}/releases/assets/${id}" -f label="$label" >/dev/null \
+                && echo "Label ok: $suffix -> $label" \
+                || echo "::warning::Falha ao nomear asset ($suffix)"
+            fi
+          }
+
+          case "${{ matrix.platform }}/${{ matrix.rust_targets }}" in
+            "windows-latest/")
+              label_asset "_x64-setup.exe" "NexTags Windows — Instalador"
+              label_asset "_windows_x64.exe" "NexTags Windows — Portátil (sem instalar)"
+              ;;
+            "macos-latest/aarch64-apple-darwin")
+              label_asset "_aarch64.dmg" "NexTags Mac — Apple Silicon (M1/M2/M3/M4)"
+              label_asset "_aarch64.app.tar.gz" "NexTags Mac — Apple Silicon (arquivo técnico, não é para instalar)"
+              ;;
+            "macos-latest/x86_64-apple-darwin")
+              label_asset "_x64.dmg" "NexTags Mac — Intel"
+              label_asset "_x64.app.tar.gz" "NexTags Mac — Intel (arquivo técnico, não é para instalar)"
+              ;;
+            "ubuntu-24.04/")
+              label_asset ".deb" "NexTags Linux — Instalador (.deb)"
+              label_asset ".AppImage" "NexTags Linux — AppImage (qualquer distro)"
+              ;;
+          esac
 
   # Android e um job separado, nao uma entrada da matriz: o toolchain (JDK, SDK,
   # NDK, targets Rust de Android) nao tem nada a ver com o build desktop.
@@ -193,3 +263,20 @@ jobs:
           set -euo pipefail
           gh release upload "${{ steps.apk.outputs.tag }}" \
             "${{ steps.apk.outputs.dest }}" --clobber
+
+      - name: Nomear artefato de forma amigável
+        # So cosmetico — nunca deve derrubar o build por causa disso.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          RELEASE_ID="$(gh api "repos/${{ github.repository }}/releases" --paginate \
+            --jq "[.[] | select(.tag_name == \"${{ steps.apk.outputs.tag }}\")][0].id")"
+          ASSET_ID="$(gh api "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" --paginate \
+            --jq "[.[] | select(.name | endswith(\"_android-debug.apk\"))][0].id")"
+          if [ -n "$ASSET_ID" ] && [ "$ASSET_ID" != "null" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/releases/assets/${ASSET_ID}" \
+              -f label="NexTags Android — Versão de teste" >/dev/null \
+              && echo "Label ok" \
+              || echo "::warning::Falha ao nomear o APK"
+          fi
