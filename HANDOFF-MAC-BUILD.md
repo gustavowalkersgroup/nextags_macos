@@ -133,6 +133,52 @@ O que trava essa rota: o wrapper forja user-agent de Chrome/Windows, o que suger
 desta sessão bloqueia o domínio com 403 de política. Abrir o site no Safari de um Mac resolve a
 dúvida em 30 segundos, e o resultado decide se essa alternativa é viável.
 
+## Ponto de atenção — assinatura de código Windows (SmartScreen)
+
+Mesma família de problema que o macOS, versão Windows: o `.exe` sai **sem assinatura Authenticode**
+(não configuramos certificado). Ao baixar e abrir, o Microsoft Defender SmartScreen bloqueia com
+"O Windows protegeu o computador" / "Fornecedor desconhecido".
+
+**Não existe contorno gratuito nem por configuração de projeto.** SmartScreen decide com base em
+duas coisas: se o arquivo tem assinatura de um certificado confiável, e — mesmo assinado — quantas
+pessoas já rodaram esse arquivo específico sem problema (reputação, acumulada por hash). Sem
+assinatura, a reputação nunca acumula: cada novo build tem um hash diferente e volta à estaca zero.
+
+### O que resolve
+
+Comprar um certificado de assinatura de código (Authenticode) de uma CA reconhecida (DigiCert,
+Sectigo, SSL.com, GlobalSign...). Duas categorias:
+
+- **EV (Extended Validation)** — US$ ~250–450/ano, entregue em token USB/HSM (não dá pra usar
+  direto num runner de CI hospedado sem um passo a mais, tipo HSM em nuvem do próprio provedor).
+  Reputação com o SmartScreen é **imediata**: assinou com EV, o aviso some no mesmo build.
+- **OV (Organization Validation)** — US$ ~70–250/ano, arquivo `.pfx` comum, funciona direto em CI.
+  Mais barato, mas a reputação **é construída aos poucos** pelo volume de downloads/execuções — nas
+  primeiras semanas com poucos usuários, o SmartScreen pode continuar avisando (com o texto mudando
+  de "fornecedor desconhecido" para o nome da empresa, o que já ajuda a confiança de quem instala).
+
+Validação de identidade da empresa (CNPJ, telefone, etc.) é exigida nos dois casos e costuma levar
+alguns dias — pedir com antecedência de qualquer data de lançamento.
+
+### O que já está preparado no workflow
+
+`.github/workflows/build.yml` já lê os secrets `WINDOWS_CERTIFICATE` (o `.pfx` do certificado,
+convertido pra base64: `base64 -i certificado.pfx | tr -d '\n'`) e `WINDOWS_CERTIFICATE_PASSWORD` —
+é o mesmo mecanismo que o `tauri-action` já usa para os secrets `APPLE_CERTIFICATE*` no job de
+macOS. Sem esses secrets cadastrados no repo, o build segue exatamente como hoje (sem assinatura,
+sem quebrar nada). Assim que a NexTags comprar o certificado, é só:
+
+1. Cadastrar os dois secrets em Settings → Secrets and variables → Actions.
+2. Disparar um novo build — a assinatura passa a acontecer sozinha, sem mexer no workflow de novo.
+
+### O que NÃO resolve (ou resolve pouco)
+
+- **Enviar o `.exe` pro Microsoft pra revisão de falso positivo**
+  (https://www.microsoft.com/en-us/wdsi/filesubmission) — vale a pena tentar, mas sozinho raramente
+  remove o bloqueio de um binário sem assinatura e com poucos downloads; é reforço, não solução.
+- **Assinatura autoassinada** — mesmo problema do macOS: passa em validação técnica, mas o
+  SmartScreen não confia em CA que não é reconhecida publicamente.
+
 ## Correções feitas antes do primeiro run (jul/2026)
 
 O workflow tinha sido escrito mas nunca executado, e não teria produzido artefato de macOS nem de
